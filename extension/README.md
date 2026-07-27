@@ -18,8 +18,45 @@ Windows/Linux: Chrome only accept `Ctrl+Shift+[0..9]` as **suggested** global ke
 
 ## Use
 
-Play any YouTube video, press hotkey anywhere (even other app focused) → video pop into floating window on top of everything. Press again → close float, back to tab.
-No YouTube tab focused? Extension find one: already-floating tab first, else audible tab, else first YouTube tab.
+Two shortcuts, for two different situations:
+
+| Shortcut | Works when | Notes |
+| --- | --- | --- |
+| `Ctrl+Shift+9` (global) | Any app focused, even outside Chrome | Configurable at `chrome://extensions/shortcuts` |
+| `Alt+P` (in-page) | YouTube tab focused | Always works, even with an ad blocker on |
+
+Play any YouTube video, press either → video pop into floating window on top of everything. Press again → close float, back to tab.
+No YouTube tab focused? Extension find one: audible tab first, else active tab, else most recent YouTube tab.
+
+**Why two?** Both PiP APIs refuse to open a window without *user activation*. A real keypress in the page carries its own activation, so `Alt+P` always work. The global shortcut can't — Chrome is not even focused — so it rely on the activation Chrome grant to the extension, and some other extensions (ad blockers on YouTube especially) leave that unavailable. If the global key do nothing while an ad blocker is on, use `Alt+P`, or allowlist YouTube in the ad blocker.
+
+Chrome swallow a bound command shortcut when it has focus, so `Ctrl+Shift+9` never reach the page — that why the in-page key is a separate combo and not the same one.
+
+### Two kinds of float
+
+The extension try the rich float first (Document Picture-in-Picture: own window, own control bar). Some setups kill that window a few milliseconds after it open — ad blockers on YouTube are the common case. The extension notice within ~25ms, remember it, and from then on go straight to **native Picture-in-Picture**: a browser-drawn window with no document of its own, so nothing on the page can reach in and close it. You lose the custom control bar, but Chrome draw its own play/pause and seek, and next/previous is wired through the Media Session API.
+
+**The very first press on such a page do nothing visible** — the rich float open and get killed, and that press is spent. Press again and the native window open. After that it go straight to native every time, remembered per site across reloads.
+
+Why not fail over instantly instead? Because the browser spend your keypress ("transient user activation") on the *first* PiP call. Once `requestWindow()` consume it there is none left to open a second window, so the choice have to be made before the press is spent — which mean learning it from the press before.
+
+If the rich float ever survive again (blocker turned off, site changed), the extension notice and go back to using it.
+
+### Making profiles match
+
+Two Chrome profiles can end up with different-looking floats — one native, one rich — because only one of them can keep a rich float alive. Telling them apart: a rich float have a `youtube.com` title bar and the tab keep playing normally; native PiP have no title bar and the tab show "Playing in picture-in-picture".
+
+To pin one kind, run this in the console on youtube.com in the profile you want to change:
+
+```js
+localStorage.setItem("__mwtPipMode", "native"); // always native PiP
+localStorage.setItem("__mwtPipMode", "rich");   // always the rich float
+localStorage.removeItem("__mwtPipMode");        // back to automatic
+```
+
+`native` is the only setting that look the same in every profile, since the rich float genuinely cannot survive where something is closing it.
+
+Float show a live mirror of the video, not the video element itself. The tab keep playing normally and audio still come from the tab. This is deliberate: YouTube video is MediaSource-backed through a `blob:` URL tied to the page document, so moving the element into the float make the stream unresolvable and kill both the playback and the float window.
 
 Float window size follow real video aspect ratio (longest side 480px), so whole frame visible — no crop.
 Resize float window by hand any time (width and height both free). After manual resize, extension stop auto-sizing that window — your size stick even across video switches.
@@ -34,7 +71,7 @@ Resize float window by hand any time (width and height both free). After manual 
 | ⏩ | `→` | Forward 5s (`l` = 10s) |
 | ⏭ | `n` | Next video |
 
-Next/prev drive YouTube's own player API, so float keep showing correct video after switch even when YouTube reuse same `<video>` element.
+Next/prev click YouTube's own player buttons. The float run in the extension isolated world (needed so the PiP request keep its user activation), which can't reach the page's player object, so button clicking is the path used.
 
 ## Note
 
