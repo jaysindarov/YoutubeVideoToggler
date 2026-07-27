@@ -1,10 +1,20 @@
 const YOUTUBE_MATCH = "*://*.youtube.com/*";
+const YOUTUBE_HOST = /(^|\.)youtube\.com$/;
 
-chrome.commands.onCommand.addListener(async (command) => {
-  if (command !== "toggle-pip") return;
+function isYouTubeTab(tab) {
+  if (!tab || !tab.url) return false;
+  try {
+    return YOUTUBE_HOST.test(new URL(tab.url).hostname);
+  } catch (_) {
+    return false;
+  }
+}
+
+async function pickTab(preferredTab) {
+  if (isYouTubeTab(preferredTab)) return preferredTab;
 
   const tabs = await chrome.tabs.query({ url: YOUTUBE_MATCH });
-  if (!tabs.length) return;
+  if (!tabs.length) return null;
 
   // Prefer a tab that already has PiP active (so the hotkey can close it),
   // then a tab that's audible, then just the first YouTube tab found.
@@ -17,19 +27,40 @@ chrome.commands.onCommand.addListener(async (command) => {
     )
   );
 
-  const target =
-    results.find((r) => r.inPip)?.tab ||
-    tabs.find((t) => t.audible) ||
-    tabs[0];
+  return results.find((r) => r.inPip)?.tab || tabs.find((t) => t.audible) || tabs[0];
+}
 
-  chrome.scripting.executeScript({
-    target: { tabId: target.id },
-    // MAIN world so we can drive YouTube's own player API (nextVideo /
-    // previousVideo), which survives SPA navigation far better than clicking
-    // player buttons that may not be rendered.
-    world: "MAIN",
-    func: togglePip,
-  });
+async function runToggle(preferredTab) {
+  const target = await pickTab(preferredTab);
+  if (!target) {
+    console.warn("YouTube Floating PiP Toggle: no YouTube tab open");
+    return;
+  }
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: target.id },
+      // MAIN world so we can drive YouTube's own player API (nextVideo /
+      // previousVideo), which survives SPA navigation far better than clicking
+      // player buttons that may not be rendered.
+      world: "MAIN",
+      func: togglePip,
+    });
+  } catch (err) {
+    console.error("YouTube Floating PiP Toggle: injection failed", err);
+  }
+}
+
+chrome.commands.onCommand.addListener((command) => {
+  if (command !== "toggle-pip") return;
+  runToggle(null);
+});
+
+// Clicking the toolbar icon does the same thing. Without this the icon is dead,
+// which leaves no way to trigger the extension when the keyboard shortcut is
+// unbound — the default state on a fresh install if the suggested key is
+// already taken.
+chrome.action.onClicked.addListener((tab) => {
+  runToggle(tab);
 });
 
 function isInPip() {
