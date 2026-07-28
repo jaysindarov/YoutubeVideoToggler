@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube Floating PiP Toggle",
-  "version": "1.2.0",
+  "version": "1.4.0",
   "description": "Global hotkey to pop the active YouTube video into a real floating Picture-in-Picture window that stays on top of every app, not just the YouTube tab.",
   "permissions": ["scripting", "tabs", "storage"],
   "host_permissions": ["*://*.youtube.com/*"],

@@ -14,17 +14,80 @@
 if (!window.__mwtInstalled) {
   window.__mwtInstalled = true;
 
+  // While the float is up, the tab is still rendering the same video full size
+  // right behind it — two copies of the same frame competing for attention. The
+  // page copy gets blacked out so the float reads as the one to watch.
+  //
+  // Presentation only: a CSS filter on the page's element plus an opaque cover
+  // over the player. captureStream() takes frames from the media pipeline,
+  // before compositing, so the mirror in the float stays sharp, and the element
+  // keeps decoding and playing audio exactly as before. Nothing here pauses,
+  // hides or detaches anything — display:none would risk Chrome throttling the
+  // very element the float is mirroring.
+  const BLUR_CLASS = "mwt-blurred";
+  const BLUR_STYLE_ID = "mwt-blur-style";
+  const BLUR_NOTE_CLASS = "mwt-blur-note";
+
+  function ensureBlurStyle() {
+    if (document.getElementById(BLUR_STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = BLUR_STYLE_ID;
+    style.textContent = `
+      .${BLUR_CLASS} video {
+        filter: brightness(0) !important;
+        transition: filter .2s ease;
+      }
+      .${BLUR_NOTE_CLASS} {
+        position:absolute; inset:0; z-index:59; display:flex;
+        align-items:center; justify-content:center; pointer-events:none;
+        background:#000;
+        font-family:"YouTube Sans", Roboto, system-ui, sans-serif;
+        font-size:15px; letter-spacing:.02em; color:rgba(255,255,255,.72);
+      }
+    `;
+    (document.head || document.documentElement).append(style);
+  }
+
+  function playerHosts() {
+    return [
+      document.getElementById("movie_player"),
+      document.getElementById("shorts-player"),
+    ].filter(Boolean);
+  }
+
+  // Idempotent, and called again on every reconcile tick: YouTube rebuilds the
+  // player host on navigation, and a rebuilt host comes back unblurred.
+  function setPageBlur(on) {
+    if (on) ensureBlurStyle();
+    for (const host of playerHosts()) {
+      host.classList.toggle(BLUR_CLASS, on);
+      const note = host.querySelector(`:scope > .${BLUR_NOTE_CLASS}`);
+      if (on && !note) {
+        const el = document.createElement("div");
+        el.className = BLUR_NOTE_CLASS;
+        const label = document.createElement("span");
+        label.textContent = "Playing in floating window";
+        el.append(label);
+        host.append(el);
+      } else if (!on && note) {
+        note.remove();
+      }
+    }
+  }
+
   function togglePip() {
     if (window.documentPictureInPicture && window.documentPictureInPicture.window) {
       console.log("YouTube Floating PiP Toggle: closing existing float");
       // Marks this close as ours, so the watchdog does not mistake it for the
       // float being killed and bounce straight into native PiP.
       window.__mwtIntentionalClose = Date.now();
+      setPageBlur(false);
       window.documentPictureInPicture.window.close();
       return;
     }
     if (document.pictureInPictureElement) {
       console.log("YouTube Floating PiP Toggle: exiting existing PiP");
+      setPageBlur(false);
       document.exitPictureInPicture().catch(() => {});
       return;
     }
@@ -215,9 +278,18 @@ if (!window.__mwtInstalled) {
       }
       return video
         .requestPictureInPicture()
-        .then(() => console.log("YouTube Floating PiP Toggle: native PiP open"))
+        .then(() => {
+          console.log("YouTube Floating PiP Toggle: native PiP open");
+          setPageBlur(true);
+          // Chrome's own close button and the OS both bypass togglePip, so the
+          // blur has to come off wherever PiP actually ends.
+          video.addEventListener("leavepictureinpicture", () => setPageBlur(false), {
+            once: true,
+          });
+        })
         .catch((err) => {
           console.error("YouTube Floating PiP Toggle: native PiP failed", err);
+          setPageBlur(false);
         });
     }
 
@@ -249,11 +321,34 @@ if (!window.__mwtInstalled) {
           width:100%; height:100%; object-fit:contain; background:#000; display:block;
         }
         #mwt-bar {
-          position:absolute; left:0; right:0; bottom:0; display:flex; gap:2px;
+          position:absolute; left:0; right:0; bottom:10px; display:flex; gap:2px;
           align-items:center; justify-content:center; padding:6px 4px;
           background:linear-gradient(to top, rgba(0,0,0,.75), rgba(0,0,0,0));
           opacity:0; transition:opacity .15s; font-family:system-ui, sans-serif;
         }
+        /* Scrub strip. The hit area is taller than the visible line so the bar
+           is grabbable in a small window; only the track inside it is drawn. */
+        #mwt-progress {
+          position:absolute; left:0; right:0; bottom:0; height:14px; z-index:3;
+          display:flex; align-items:flex-end; cursor:pointer;
+          touch-action:none; user-select:none;
+        }
+        #mwt-track {
+          position:relative; width:100%; height:3px;
+          background:rgba(255,255,255,.28); transition:height .1s;
+        }
+        #mwt-wrap:hover #mwt-track, #mwt-progress.scrubbing #mwt-track { height:6px; }
+        #mwt-buffered, #mwt-played {
+          position:absolute; left:0; top:0; bottom:0; width:0;
+        }
+        #mwt-buffered { background:rgba(255,255,255,.4); }
+        #mwt-played { background:#f00; }
+        #mwt-knob {
+          position:absolute; top:50%; left:0; width:11px; height:11px;
+          margin:-5.5px 0 0 -5.5px; border-radius:50%; background:#f00;
+          opacity:0; transition:opacity .1s; pointer-events:none;
+        }
+        #mwt-wrap:hover #mwt-knob, #mwt-progress.scrubbing #mwt-knob { opacity:1; }
         #mwt-wrap:hover #mwt-bar, #mwt-bar:focus-within { opacity:1; }
         #mwt-bar button {
           border:none; background:transparent; color:#fff; cursor:pointer;
@@ -312,15 +407,68 @@ if (!window.__mwtInstalled) {
         if (playBtn.textContent !== label) playBtn.textContent = label;
       }
 
+      function clockTime(seconds) {
+        if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+        const total = Math.floor(seconds);
+        const s = String(total % 60).padStart(2, "0");
+        const m = Math.floor(total / 60) % 60;
+        const h = Math.floor(total / 3600);
+        return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+      }
+
+      // Driven by timeupdate (roughly 4/s) and by the reconcile tick, so the
+      // line keeps moving even when the page's element stops firing events —
+      // which happens whenever YouTube swaps the element under us.
+      function syncProgress() {
+        if (!source) return;
+        const duration = Number.isFinite(source.duration) ? source.duration : 0;
+        if (duration <= 0) {
+          played.style.width = "0%";
+          buffered.style.width = "0%";
+          knob.style.left = "0%";
+          return;
+        }
+        const ratio = Math.min(1, Math.max(0, source.currentTime / duration));
+        const pct = (ratio * 100).toFixed(3) + "%";
+        played.style.width = pct;
+        knob.style.left = pct;
+        let ahead = 0;
+        try {
+          const ranges = source.buffered;
+          for (let i = 0; i < ranges.length; i += 1) {
+            if (ranges.start(i) <= source.currentTime && ranges.end(i) >= source.currentTime) {
+              ahead = ranges.end(i);
+              break;
+            }
+          }
+        } catch (_) {
+          /* buffered can throw on a detached element */
+        }
+        buffered.style.width =
+          ((Math.min(1, Math.max(ratio, ahead / duration)) * 100).toFixed(3)) + "%";
+        progress.title = `${clockTime(source.currentTime)} / ${clockTime(duration)}`;
+      }
+
+      function syncMediaUi() {
+        syncPlayIcon();
+        syncProgress();
+      }
+
       function bindMediaEvents(video) {
         video.addEventListener("play", syncPlayIcon);
         video.addEventListener("pause", syncPlayIcon);
+        video.addEventListener("timeupdate", syncProgress);
+        video.addEventListener("durationchange", syncProgress);
+        video.addEventListener("progress", syncProgress);
       }
 
       function unbindMediaEvents(video) {
         if (!video) return;
         video.removeEventListener("play", syncPlayIcon);
         video.removeEventListener("pause", syncPlayIcon);
+        video.removeEventListener("timeupdate", syncProgress);
+        video.removeEventListener("durationchange", syncProgress);
+        video.removeEventListener("progress", syncProgress);
       }
 
       function maybeResize(video) {
@@ -368,7 +516,8 @@ if (!window.__mwtInstalled) {
         console.log(`YouTube Floating PiP Toggle: mirroring ${sourceKey}`);
         lastAspect = sized ? aspectKey(video) : "";
         maybeResize(video);
-        syncPlayIcon();
+        syncMediaUi();
+        setPageBlur(true);
       }
 
       function streamIsDead() {
@@ -390,6 +539,7 @@ if (!window.__mwtInstalled) {
         unbindMediaEvents(source);
         const wasMirroring = source;
         mirror.srcObject = null;
+        setPageBlur(false);
 
         const ourClose =
           window.__mwtIntentionalClose &&
@@ -442,11 +592,28 @@ if (!window.__mwtInstalled) {
           }
         }
         maybeResize(source);
-        syncPlayIcon();
+        syncMediaUi();
+        setPageBlur(true);
       }
 
       const bar = pipWindow.document.createElement("div");
       bar.id = "mwt-bar";
+
+      // Position line, always visible — the float otherwise gives no clue how
+      // far into the video you are. Fills: buffered behind, played in front,
+      // knob at the playhead.
+      const progress = pipWindow.document.createElement("div");
+      progress.id = "mwt-progress";
+      const track = pipWindow.document.createElement("div");
+      track.id = "mwt-track";
+      const buffered = pipWindow.document.createElement("div");
+      buffered.id = "mwt-buffered";
+      const played = pipWindow.document.createElement("div");
+      played.id = "mwt-played";
+      const knob = pipWindow.document.createElement("div");
+      knob.id = "mwt-knob";
+      track.append(buffered, played, knob);
+      progress.append(track);
 
       function button(label, title, onClick) {
         const b = pipWindow.document.createElement("button");
@@ -518,6 +685,53 @@ if (!window.__mwtInstalled) {
 
       bar.append(prevBtn, backBtn, playBtn, fwdBtn, nextBtn);
       wrap.append(bar);
+      wrap.append(progress);
+
+      // Scrubbing drives the page's element, like every other control here:
+      // the mirror is a MediaStream and seeking one does nothing.
+      function seekToClientX(clientX) {
+        if (!source) return;
+        const duration = Number.isFinite(source.duration) ? source.duration : 0;
+        const rect = track.getBoundingClientRect();
+        if (duration <= 0 || !rect.width) return;
+        const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+        source.currentTime = ratio * duration;
+        syncProgress();
+      }
+
+      let scrubbing = false;
+
+      progress.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        scrubbing = true;
+        progress.classList.add("scrubbing");
+        // Capture so a drag that leaves the strip — easy in a 480px window —
+        // keeps seeking instead of dying on the first pixel outside.
+        try {
+          progress.setPointerCapture(e.pointerId);
+        } catch (_) {
+          /* capture is a nicety; click-to-seek still works */
+        }
+        seekToClientX(e.clientX);
+      });
+
+      progress.addEventListener("pointermove", (e) => {
+        if (scrubbing) seekToClientX(e.clientX);
+      });
+
+      function endScrub(e) {
+        if (!scrubbing) return;
+        scrubbing = false;
+        progress.classList.remove("scrubbing");
+        try {
+          progress.releasePointerCapture(e.pointerId);
+        } catch (_) {
+          /* already released */
+        }
+      }
+
+      progress.addEventListener("pointerup", endScrub);
+      progress.addEventListener("pointercancel", endScrub);
 
       pipWindow.document.addEventListener("keydown", (e) => {
         switch (e.key) {
@@ -685,7 +899,10 @@ if (!window.__mwtInstalled) {
   // reaches us as a real keydown with activation of its own and opens the float
   // no matter what else is installed. It only works while the YouTube tab has
   // focus, which is exactly the case the global one does not need to cover.
-  const DEFAULT_PAGE_COMBO = "Alt+P";
+  // Must stay different from the command accelerator below: Chrome consumes a
+  // bound command shortcut before the page sees it, so binding both to the same
+  // combo would leave the in-page path with no keydown to ride.
+  const DEFAULT_PAGE_COMBO = "Ctrl+I";
   let pageCombo = DEFAULT_PAGE_COMBO;
   // Mirrored from chrome.commands by the worker. Matched too, in case a build
   // of Chrome does forward it, but it is normally consumed before we see it.
@@ -789,5 +1006,7 @@ if (!window.__mwtInstalled) {
   // Bump on every change. Stale content scripts survive an extension reload in
   // already-open tabs and are indistinguishable from fresh ones in the console,
   // which has burned several rounds of debugging — this makes it obvious.
-  console.log("YouTube Floating PiP Toggle: content script ready [build 14 — pip-mode]");
+  console.log(
+    "YouTube Floating PiP Toggle: content script ready [build 16 — blackout + scrub bar]"
+  );
 }

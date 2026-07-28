@@ -23,14 +23,16 @@ Two shortcuts, for two different situations:
 | Shortcut | Works when | Notes |
 | --- | --- | --- |
 | `Ctrl+Shift+9` (global) | Any app focused, even outside Chrome | Configurable at `chrome://extensions/shortcuts` |
-| `Alt+P` (in-page) | YouTube tab focused | Always works, even with an ad blocker on |
+| `Ctrl+I` (in-page) | YouTube tab focused | Always works, even with an ad blocker on |
 
 Play any YouTube video, press either → video pop into floating window on top of everything. Press again → close float, back to tab.
 No YouTube tab focused? Extension find one: audible tab first, else active tab, else most recent YouTube tab.
 
-**Why two?** Both PiP APIs refuse to open a window without *user activation*. A real keypress in the page carries its own activation, so `Alt+P` always work. The global shortcut can't — Chrome is not even focused — so it rely on the activation Chrome grant to the extension, and some other extensions (ad blockers on YouTube especially) leave that unavailable. If the global key do nothing while an ad blocker is on, use `Alt+P`, or allowlist YouTube in the ad blocker.
+While the float is open, the player in the tab go fully black, with a "Playing in floating window" label over it — so the two copies of the same frame don't fight for attention. Presentation only: a `brightness(0)` filter on the page's element plus an opaque cover. `captureStream()` take frames before compositing, so the float stay sharp, and playback/audio is untouched. Blackout clear when the float close, however it close.
 
-Chrome swallow a bound command shortcut when it has focus, so `Ctrl+Shift+9` never reach the page — that why the in-page key is a separate combo and not the same one.
+**Why two?** Both PiP APIs refuse to open a window without *user activation*. A real keypress in the page carries its own activation, so `Ctrl+I` always work. The global shortcut can't — Chrome is not even focused — so it rely on the activation Chrome grant to the extension, and some other extensions (ad blockers on YouTube especially) leave that unavailable. If the global key do nothing while an ad blocker is on, use `Ctrl+I`, or allowlist YouTube in the ad blocker.
+
+Chrome swallow a bound command shortcut when it has focus, so `Ctrl+Shift+9` never reach the page — that why the in-page key is a separate combo and not the same one. Don't bind the global command to `Ctrl+I` for the same reason: Chrome would eat the key before the page handler ever see it.
 
 ### Two kinds of float
 
@@ -60,6 +62,12 @@ Float show a live mirror of the video, not the video element itself. The tab kee
 
 Float window size follow real video aspect ratio (longest side 480px), so whole frame visible — no crop.
 Resize float window by hand any time (width and height both free). After manual resize, extension stop auto-sizing that window — your size stick even across video switches.
+
+### Progress line
+
+Thin red position line sit at the bottom of the float, always visible — same idea as any player. Hover the float: line get thicker and a knob appear at the playhead. Click anywhere on it to jump there, or drag the knob to scrub. Grey-white fill behind the red one is buffered ahead. Hover show `current / total` as a tooltip.
+
+Seeking drive the page's own video element, not the mirror — a MediaStream have nothing to seek.
 
 ### Controls (hover float window to reveal bar)
 
