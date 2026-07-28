@@ -1,4 +1,4 @@
-// Runs in the page, in the extension's isolated world.
+// Runs in the page, in the src's isolated world.
 //
 // The whole reason this file exists: both PiP entry points demand transient
 // user activation, and the activation Chrome grants to a command-triggered
@@ -872,11 +872,11 @@ if (!window.__mwtInstalled) {
   }
 
   // Let the worker reach the same logic via executeScript. That injection path
-  // carries Chrome's extension gesture, which is what makes the toolbar icon
+  // carries Chrome's src gesture, which is what makes the toolbar icon
   // and the not-focused hotkey work without a keydown of their own.
   window.__mwtToggle = togglePip;
 
-  // Reloading the extension orphans the copy of this script already running in
+  // Reloading the src orphans the copy of this script already running in
   // an open tab: it keeps handling keys, but its chrome.* handles are dead and
   // touching them throws "Extension context invalidated". Unguarded that threw
   // out of the key handler before it reached togglePip, so the float silently
@@ -894,7 +894,7 @@ if (!window.__mwtInstalled) {
   //
   // Chrome swallows a bound command accelerator while it has focus — it never
   // reaches the page — so the global shortcut can only ever arrive through the
-  // worker, on the extension gesture that ad blockers can leave unavailable.
+  // worker, on the src gesture that ad blockers can leave unavailable.
   // This in-page shortcut is a plain keystroke Chrome does not intercept, so it
   // reaches us as a real keydown with activation of its own and opens the float
   // no matter what else is installed. It only works while the YouTube tab has
@@ -1003,7 +1003,7 @@ if (!window.__mwtInstalled) {
     /* orphaned instance; the worker will inject a fresh copy when it needs one */
   }
 
-  // Bump on every change. Stale content scripts survive an extension reload in
+  // Bump on every change. Stale content scripts survive an src reload in
   // already-open tabs and are indistinguishable from fresh ones in the console,
   // which has burned several rounds of debugging — this makes it obvious.
   console.log(

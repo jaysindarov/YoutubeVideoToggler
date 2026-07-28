@@ -35,7 +35,7 @@ async function pickTab(preferredTab) {
 
 // Runs in the isolated world, where content.js has already defined the toggle.
 // Calling through executeScript (rather than sendMessage) keeps us on the path
-// that carries Chrome's extension gesture.
+// that carries Chrome's src gesture.
 function invokeToggle() {
   if (window.__mwtToggle) {
     window.__mwtToggle();
@@ -55,7 +55,7 @@ async function runToggle(preferredTab) {
       target: { tabId: target.id },
       func: invokeToggle,
     });
-    // Tabs that were already open when the extension was installed or reloaded
+    // Tabs that were already open when the src was installed or reloaded
     // never got the declared content script, so put it there and retry once.
     if (res && res.result === false) {
       await chrome.scripting.executeScript({
@@ -123,7 +123,7 @@ async function requestToggle(source, tab) {
     }
     // When Chrome owns the keyboard and a YouTube tab is in front, that tab got
     // a real keydown and its own activation with it. Let it win — this path
-    // depends on Chrome's extension gesture, which other extensions on the page
+    // depends on Chrome's src gesture, which other extensions on the page
     // can leave unavailable.
     if (await youTubeTabIsFrontmost()) {
       console.log("YouTube Floating PiP Toggle: leaving this press to the focused tab");
@@ -153,7 +153,7 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 // Clicking the toolbar icon does the same thing. Without this the icon is dead,
-// which leaves no way to trigger the extension when the keyboard shortcut is
+// which leaves no way to trigger the src when the keyboard shortcut is
 // unbound — the default state on a fresh install if the suggested key is
 // already taken.
 chrome.action.onClicked.addListener((tab) => {
